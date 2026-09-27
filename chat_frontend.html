@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>C++ Live Chat</title>
+<style>
+  body {
+    font-family: -apple-system, Arial, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    margin: 0;
+    padding: 40px 20px;
+    display: flex;
+    justify-content: center;
+  }
+  .card {
+    background: #1e293b;
+    border-radius: 12px;
+    padding: 28px;
+    max-width: 480px;
+    width: 100%;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+  }
+  h1 { font-size: 1.2rem; margin-top: 0; color: #7dd3fc; }
+  label { display: block; font-size: 0.8rem; color: #94a3b8; margin: 10px 0 4px; }
+  input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 9px 10px;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-size: 0.9rem;
+  }
+  .row { display: flex; gap: 8px; }
+  .row input { flex: 1; }
+  button {
+    margin-top: 14px;
+    padding: 10px 16px;
+    border: none;
+    border-radius: 8px;
+    background: #38bdf8;
+    color: #0f172a;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { background: #475569; cursor: not-allowed; }
+  .messages {
+    margin-top: 16px;
+    background: #0f172a;
+    border-radius: 8px;
+    padding: 12px;
+    height: 220px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .msg { font-size: 0.88rem; line-height: 1.3; }
+  .msg b { color: #7dd3fc; }
+  .status { font-size: 0.75rem; color: #64748b; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel">
+  const { useState, useEffect, useRef } = React;
+
+  function App() {
+    const [host, setHost] = useState("127.0.0.1");
+    const [port, setPort] = useState("8081");
+    const [name, setName] = useState("Me");
+    const [draft, setDraft] = useState("");
+    const [messages, setMessages] = useState([]);
+    const [error, setError] = useState(null);
+
+    const scrollRef = useRef(null);
+
+    const baseUrl = `http://${host}:${port}`;
+
+    // ---- Fetch the current messages from the server ----
+    async function refreshMessages() {
+      try {
+        const res = await fetch(`${baseUrl}/messages`);
+        if (!res.ok) throw new Error(`Server said ${res.status}`);
+        const text = await res.text();
+        const lines = text.split("\n").filter((l) => l.length > 0);
+        setMessages(lines);
+        setError(null);
+      } catch (err) {
+        setError(err.message);
+      }
+    }
+
+    // ---- EFFECT: run side effects outside of rendering ----
+    // This runs once when the component first mounts, sets up a repeating
+    // timer to poll the server every 2 seconds, and -- importantly --
+    // returns a cleanup function that clears the timer. Without cleanup,
+    // leaving the page or changing host/port would leave the old timer
+    // running forever in the background.
+    useEffect(() => {
+      refreshMessages(); // fetch immediately on mount
+      const interval = setInterval(refreshMessages, 2000);
+      return () => clearInterval(interval); // cleanup when host/port changes
+    }, [host, port]); // re-run this effect if host or port changes
+
+    // Auto-scroll to the newest message whenever the list updates
+    useEffect(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    }, [messages]);
+
+    async function sendMessage() {
+      if (!draft.trim()) return;
+      const line = `${name}: ${draft}`;
+      try {
+        await fetch(`${baseUrl}/send`, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: line,
+        });
+        setDraft("");
+        refreshMessages(); // show it immediately instead of waiting for the next poll
+      } catch (err) {
+        setError(err.message);
+      }
+    }
+
+    return (
+      <div className="card">
+        <h1>Live Chat (via HTTP polling)</h1>
+
+        <div className="row">
+          <div style={{ flex: 1 }}>
+            <label>Host</label>
+            <input value={host} onChange={(e) => setHost(e.target.value)} />
+          </div>
+          <div style={{ width: 90 }}>
+            <label>Port</label>
+            <input value={port} onChange={(e) => setPort(e.target.value)} />
+          </div>
+        </div>
+
+        <label>Your name</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} />
+
+        <div className="messages" ref={scrollRef}>
+          {messages.map((line, i) => {
+            const splitAt = line.indexOf(": ");
+            const who = splitAt >= 0 ? line.slice(0, splitAt) : "";
+            const text = splitAt >= 0 ? line.slice(splitAt + 2) : line;
+            return (
+              <div className="msg" key={i}>
+                {who && <b>{who}: </b>}
+                {text}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="row" style={{ marginTop: 10 }}>
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+            placeholder="Type a message..."
+          />
+        </div>
+        <button onClick={sendMessage}>Send</button>
+
+        <div className="status">
+          {error ? `Error: ${error}` : "Polling every 2 seconds..."}
+        </div>
+      </div>
+    );
+  }
+
+  const root = ReactDOM.createRoot(document.getElementById("root"));
+  root.render(<App />);
+</script>
+
+</body>
+</html>
